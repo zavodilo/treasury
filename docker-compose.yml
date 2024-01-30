@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:14-alpine
+    restart: always
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_PASSWORD: admin
+
+  go:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8080:8080"
+    restart: always
+    tty: true
+    container_name: treasury
+    working_dir: /code
+    volumes:
+      - ./go.mod:/code/go.mod
+      - ./go.sum:/code/go.sum
+      - ./src:/code/src
+      - ./main.go:/code/main.go
+    environment:
+      - API_PORT=8080
+      - DB_DSN=postgres://postgres:admin@db:5432/postgres?sslmode=disable
+    depends_on:
+      - db

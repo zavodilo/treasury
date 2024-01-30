@@ -1,73 +1,174 @@
 package main
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"github.com/go-pg/pg/v10"
 	"io"
 	"net/http"
 	"strconv"
-	"treasury/entity"
-	"treasury/server/response"
+	"strings"
+	"treasury/src/domain"
+	"treasury/src/driver/postgres"
+	"treasury/src/entity"
+	"treasury/src/server/response"
 )
 
 const (
 	errCode    int    = 503
 	okCode     int    = 200
 	personType string = "Individual"
+	sdnUrl     string = "https://www.treasury.gov/ofac/downloads/sdn.xml"
 )
 
-// TODO сделать асинхронную загрузку в бд
+var Db *pg.DB
+
 func main() {
+	initDb()
+	initServer()
+}
+
+func initServer() {
 	http.HandleFunc("/update", updateHandler)
 	http.HandleFunc("/state", stateHandler)
+	http.HandleFunc("/count", countHandler)
+	http.HandleFunc("/get_names", getNamesHandler)
 	http.ListenAndServe(":8080", nil)
 }
 
+func initDb() {
+	var err error
+	Db, err = postgres.StartDB()
+	if err != nil {
+		panic(err)
+	}
+}
+
+func getNamesHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		resp := response.EmptySearchResponse{
+			Result: false,
+			Info:   "Empty name",
+		}
+		response.JsonResponse(w, resp, errCode)
+		return
+	}
+	typeSearch := r.URL.Query().Get("type")
+	if typeSearch == "" {
+		//resp := response.EmptySearchResponse{
+		//	Result: false,
+		//	Info:   "Empty type",
+		//}
+		//response.JsonResponse(w, resp, errCode)
+		//return
+		typeSearch = "strong"
+	}
+
+	typeSearch = strings.ToLower(typeSearch)
+	if typeSearch == "strong" {
+		person, err := domain.GetPersonStrong(Db, name)
+		if err != nil {
+			resp := response.EmptySearchResponse{
+				Result: false,
+				Info:   err.Error(),
+			}
+			response.JsonResponse(w, resp, errCode)
+			return
+		}
+		response.JsonResponse(w, person, errCode)
+	}
+	if typeSearch == "weak" {
+		persons, err := domain.GetPersonWeak(Db, name)
+		if err != nil {
+			resp := response.EmptySearchResponse{
+				Result: false,
+				Info:   err.Error(),
+			}
+			response.JsonResponse(w, resp, errCode)
+			return
+		}
+		response.JsonResponse(w, persons, errCode)
+	}
+
+}
+
+func countHandler(w http.ResponseWriter, r *http.Request) {
+	resp := response.StateResponse{}
+	count, err := domain.GetCount(Db)
+	if err != nil {
+		resp = response.StateResponse{
+			Result: false,
+			Info:   err.Error(),
+		}
+		response.JsonResponse(w, resp, errCode)
+	} else {
+		resp = response.StateResponse{
+			Result: true,
+			Info:   strconv.Itoa(count),
+		}
+		response.JsonResponse(w, resp, okCode)
+	}
+}
+
 func stateHandler(w http.ResponseWriter, r *http.Request) {
-	//TODO сделать получение статуса
+	resp := response.StateResponse{}
+	status, err := domain.GetState(Db)
+	if err != nil {
+		resp = response.StateResponse{
+			Result: false,
+			Info:   err.Error(),
+		}
+		response.JsonResponse(w, resp, errCode)
+	} else {
+		resp = response.StateResponse{
+			Result: true,
+			Info:   status.Info,
+		}
+		response.JsonResponse(w, resp, okCode)
+	}
 }
 
 func updateHandler(w http.ResponseWriter, r *http.Request) {
-	resp := response.Response{}
+	resp := response.UpdateResponse{}
 	err := update()
 
 	if err != nil {
-		resp = response.Response{
+		resp = response.UpdateResponse{
 			Code:   errCode,
 			Result: false,
 			Info:   err.Error(),
 		}
+		response.JsonResponse(w, resp, errCode)
 	}
 	if err == nil {
-		resp = response.Response{
+		resp = response.UpdateResponse{
 			Code:   okCode,
 			Result: true,
 			Info:   "",
 		}
+		response.JsonResponse(w, resp, okCode)
 	}
-	JsonResponse(w, resp, errCode)
 }
 
 func update() error {
-	url := "https://www.treasury.gov/ofac/downloads/sdn.xml"
-	resp, err := http.Get(url)
+	err := domain.SetState(Db, &domain.State{Info: "updating"})
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.Get(sdnUrl)
 
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	//сохранение в файл для изучения
-	//out, err := os.Create("sdn.xml")
-	//checkErr(err)
-	//defer out.Close()
-	//io.Copy(out, resp.Body)
 	if resp.StatusCode != 200 {
 		return errors.New("StatusCode error: " + strconv.Itoa(resp.StatusCode))
 	}
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	if err != nil && err != io.EOF {
 		return err
 	}
 	sdn := new(entity.Sdn)
@@ -76,25 +177,39 @@ func update() error {
 		return err
 	}
 
-	var persons []*entity.Person
-	for _, person := range sdn.SdnEntry {
-		if person.SdnType == personType {
-			helpPerson := &entity.Person{
-				LastName:  person.LastName,
-				FirstName: person.FirstName,
-				Uid:       person.Uid,
+	persons, err := domain.GetAllPersons(Db)
+	var person domain.Entry
+	for _, entry := range sdn.SdnEntry {
+		if entry.SdnType != personType {
+			continue
+		}
+		person = domain.Entry{}
+		for _, person = range *persons {
+			if person.Uid == entry.Uid {
+				if person.LastName == entry.LastName && person.FirstName == entry.FirstName {
+					person = domain.Entry{}
+				}
+				break
 			}
-			persons = append(persons, helpPerson)
+		}
+		if person.Uid == "" {
+			helpPerson := &domain.Entry{
+				LastName:  entry.LastName,
+				FirstName: entry.FirstName,
+				Uid:       entry.Uid,
+			}
+			err = domain.SetPerson(Db, helpPerson)
+			if err != nil {
+				return err
+			}
+
 		}
 	}
 
-	//println(persons)
-	return nil
-}
+	err = domain.SetState(Db, &domain.State{Info: "ok"})
+	if err != nil {
+		return err
+	}
 
-func JsonResponse(w http.ResponseWriter, resp response.Response, code int) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(resp)
+	return nil
 }
