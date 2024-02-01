@@ -48,9 +48,7 @@ func GetPersonWeak(db *pg.DB, name string) (*[]Entry, error) {
 	persons := new([]Entry)
 
 	names := strings.Split(name, " ")
-	for i, _ := range names {
-		names[i] = "%" + names[i] + "%"
-	}
+	names = append(names, name)
 	pgInNames := pg.In(names)
 	err := db.Model(persons).
 		Where("first_name IN (?) OR last_name IN (?)", pgInNames, pgInNames).

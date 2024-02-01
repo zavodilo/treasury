@@ -76,6 +76,7 @@ func getNamesHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.JsonResponse(w, person, errCode)
+		return
 	}
 	if typeSearch == "weak" {
 		persons, err := domain.GetPersonWeak(Db, name)
@@ -88,8 +89,9 @@ func getNamesHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response.JsonResponse(w, persons, errCode)
+		return
 	}
-
+	response.JsonResponse(w, "Wrong type", errCode)
 }
 
 func countHandler(w http.ResponseWriter, r *http.Request) {
