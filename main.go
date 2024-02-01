@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/xml"
-	"errors"
 	"github.com/go-pg/pg/v10"
 	"io"
 	"net/http"
@@ -131,50 +130,41 @@ func stateHandler(w http.ResponseWriter, r *http.Request) {
 
 func updateHandler(w http.ResponseWriter, r *http.Request) {
 	resp := response.UpdateResponse{}
-	err := update()
+	go update()
 
-	if err != nil {
-		resp = response.UpdateResponse{
-			Code:   errCode,
-			Result: false,
-			Info:   err.Error(),
-		}
-		response.JsonResponse(w, resp, errCode)
+	resp = response.UpdateResponse{
+		Code:   okCode,
+		Result: true,
+		Info:   "",
 	}
-	if err == nil {
-		resp = response.UpdateResponse{
-			Code:   okCode,
-			Result: true,
-			Info:   "",
-		}
-		response.JsonResponse(w, resp, okCode)
-	}
+	response.JsonResponse(w, resp, okCode)
 }
 
-func update() error {
-	err := domain.SetState(Db, &domain.State{Info: "updating"})
-	if err != nil {
-		return err
-	}
+func update() {
+	domain.SetState(Db, &domain.State{Info: "updating"})
 
 	resp, err := http.Get(sdnUrl)
 
 	if err != nil {
-		return err
+		domain.SetState(Db, &domain.State{Info: err.Error()})
+		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return errors.New("StatusCode error: " + strconv.Itoa(resp.StatusCode))
+		domain.SetState(Db, &domain.State{Info: "StatusCode error: " + strconv.Itoa(resp.StatusCode)})
+		return
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil && err != io.EOF {
-		return err
+		domain.SetState(Db, &domain.State{Info: err.Error()})
+		return
 	}
 	sdn := new(entity.Sdn)
 	err = xml.Unmarshal(body, sdn)
 	if err != nil {
-		return err
+		domain.SetState(Db, &domain.State{Info: err.Error()})
+		return
 	}
 
 	persons, err := domain.GetAllPersons(Db)
@@ -200,7 +190,8 @@ func update() error {
 			}
 			err = domain.SetPerson(Db, helpPerson)
 			if err != nil {
-				return err
+				domain.SetState(Db, &domain.State{Info: err.Error()})
+				return
 			}
 
 		}
@@ -208,8 +199,7 @@ func update() error {
 
 	err = domain.SetState(Db, &domain.State{Info: "ok"})
 	if err != nil {
-		return err
+		domain.SetState(Db, &domain.State{Info: err.Error()})
+		return
 	}
-
-	return nil
 }
