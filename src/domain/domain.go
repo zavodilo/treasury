@@ -26,11 +26,19 @@ func GetPersonStrong(db *pg.DB, name string) (*Entry, error) {
 	names := strings.Split(name, " ")
 
 	query := db.Model(person)
-	if len(names) == 1 {
+	lenNames := len(names)
+	if lenNames == 1 {
 		query.Where("last_name = ?", names[0])
 	}
-	if len(names) > 1 {
-		query.Where("first_name = ? AND last_name = ?", names[0], names[1])
+	if lenNames == 2 {
+		query.Where("last_name = ? AND first_name = ?", names[0], names[1])
+	}
+	if lenNames > 2 {
+		nameHelp := names[1]
+		for n := 2; n < lenNames; n++ {
+			nameHelp += " " + names[n]
+		}
+		query.Where("last_name = ? AND first_name = ?", names[0], nameHelp)
 	}
 	err := query.First()
 	return person, err
@@ -40,6 +48,9 @@ func GetPersonWeak(db *pg.DB, name string) (*[]Entry, error) {
 	persons := new([]Entry)
 
 	names := strings.Split(name, " ")
+	for i, _ := range names {
+		names[i] = "%" + names[i] + "%"
+	}
 	pgInNames := pg.In(names)
 	err := db.Model(persons).
 		Where("first_name IN (?) OR last_name IN (?)", pgInNames, pgInNames).
