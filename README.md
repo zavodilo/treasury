@@ -5,12 +5,12 @@
 * Сравниваем по uid с тем, что было получено из таблицы в полях first_name, last_name, если не совпадает, то пересохраняем
 
 # Запуск приложения
-make build
-make migrate
+* ``make build`` 
+* ``make migrate`` 
 
 # curl commands  
 
-curl -X GET localhost:8080/state
+* ``curl -X GET localhost:8080/state`` 
 
 # Migrations 
 Migrations work using https://github.com/go-pg/migrations. 
